@@ -1,10 +1,10 @@
-import json
 import logging
 import os
 
-from flask import jsonify
+from flask import Flask, jsonify
 
 logger = logging.getLogger(__name__)
+app = Flask(__name__)
 DATABASE_ENV_VARS = (
     "DATABASE_URL",
     "POSTGRES_URL",
@@ -15,7 +15,9 @@ DATABASE_ENV_VARS = (
 )
 
 
-def handler(request):
+@app.get("/api/health")
+@app.get("/")
+def health():
     database_url = next((os.environ[name] for name in DATABASE_ENV_VARS if os.environ.get(name)), None)
     if not database_url:
         return jsonify({"status": "error", "code": "database_url_missing"}), 503
