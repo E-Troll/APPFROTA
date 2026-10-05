@@ -1,0 +1,85 @@
+name: Improve APPFROTA database startup
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/lazy-db-init.yml
+permissions:
+  contents: write
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Defer database initialization until first request and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          p = Path('app.py')
+          s = p.read_text()
+          old = '# Initialize database on startup\ndatabase.init_db()\n'
+          new = '''_database_initialized = False
+
+
+def _ensure_database_initialized():
+    global _database_initialized
+    if not _database_initialized:
+        database.init_db()
+        _database_initialized = True
+
+
+@app.before_request
+def initialize_database_for_request():
+    if request.endpoint in {'index', 'api_health'}:
+        return None
+    try:
+        _ensure_database_initialized()
+    except Exception:
+        app.logger.exception('Database initialization failed')
+        return jsonify({'success': False, 'error': 'Banco de dados indisponível.'}), 503
+    return None
+
+
+@app.route('/api/health', methods=['GET'])
+def api_health():
+    try:
+        _ensure_database_initialized()
+    except Exception:
+        app.logger.exception('Database health check failed')
+        code = 'database_url_missing' if os.environ.get('VERCEL') == '1' and not os.environ.get('DATABASE_URL') else 'database_unavailable'
+        return jsonify({'success': False, 'status': 'error', 'code': code}), 503
+    return jsonify({
+        'success': True,
+        'status': 'ok',
+        'database': 'connected',
+        'storage_configured': storage_is_configured(),
+        'cleanup_configured': bool(os.environ.get('CRON_SECRET'))
+    })
+'''
+          if old not in s:
+              raise RuntimeError('Expected eager database initialization block not found')
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('vercel.json')
+          config = json.loads(p.read_text())
+          config['rewrites'] = [rewrite for rewrite in config['rewrites'] if rewrite.get('source') != '/api/health']
+          p.write_text(json.dumps(config, indent=2) + '\n')
+          PY
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          git rm -- api/health.py .github/workflows/lazy-db-init.yml
+          git add app.py vercel.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Initialize Supabase lazily and add health status" \
+            -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push origin HEAD:main
