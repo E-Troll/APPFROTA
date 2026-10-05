@@ -1,18 +1,53 @@
-/* Custom Styles for Vehicle Mileage Tracking Application */
+/* Custom Styles for Controle de KM COR */
 
 :root {
-    --primary-color: #1e3a8a;
-    --primary-hover: #1e40af;
-    --accent-color: #0284c7;
+    --primary-color: #1f4fa3;
+    --primary-hover: #183f85;
+    --accent-color: #1296dc;
     --success-color: #16a34a;
     --warning-color: #d97706;
     --danger-color: #dc2626;
-    --dark-bg: #0f172a;
+    --dark-bg: #0f2a5c;
     --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+
+    --bs-primary: #1f4fa3;
+    --bs-primary-rgb: 31, 79, 163;
+    --bs-info: #1296dc;
+    --bs-info-rgb: 18, 150, 220;
+    --bs-link-color: #1f4fa3;
+    --bs-link-hover-color: #183f85;
+}
+
+.btn-primary {
+    --bs-btn-bg: #1f4fa3;
+    --bs-btn-border-color: #1f4fa3;
+    --bs-btn-hover-bg: #183f85;
+    --bs-btn-hover-border-color: #183f85;
+    --bs-btn-active-bg: #153671;
+    --bs-btn-active-border-color: #153671;
+    --bs-btn-disabled-bg: #1f4fa3;
+    --bs-btn-disabled-border-color: #1f4fa3;
+}
+
+.btn-outline-primary {
+    --bs-btn-color: #1f4fa3;
+    --bs-btn-border-color: #1f4fa3;
+    --bs-btn-hover-bg: #1f4fa3;
+    --bs-btn-hover-border-color: #1f4fa3;
+    --bs-btn-active-bg: #1f4fa3;
+    --bs-btn-active-border-color: #1f4fa3;
+}
+
+.text-primary {
+    color: #1f4fa3 !important;
+}
+
+.bg-primary {
+    background-color: #1f4fa3 !important;
 }
 
 body {
-    background-color: #f8fafc;
+    background-color: #f4f8fd;
     color: #1e293b;
     font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     min-height: 100vh;
@@ -21,15 +56,45 @@ body {
 }
 
 /* Navbar */
+.brand-navbar {
+    background-color: #ffffff;
+    border-bottom: 3px solid transparent;
+    border-image: linear-gradient(90deg, #1f4fa3 0%, #1296dc 100%) 1;
+}
+
 .navbar-brand {
     font-weight: 700;
     letter-spacing: -0.02em;
+    color: #1f4fa3;
+}
+
+.navbar-brand:hover {
+    color: #183f85;
+}
+
+.brand-logo {
+    height: 52px;
+    width: 52px;
+    object-fit: contain;
+}
+
+.brand-title {
+    background: linear-gradient(90deg, #1f4fa3 0%, #1296dc 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-size: 1.25rem;
+}
+
+.nav-tabs .nav-link.active {
+    color: #1f4fa3;
+    border-bottom: 3px solid #1296dc;
 }
 
 /* Card Styling */
 .card {
     border-radius: 12px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid #dbe6f4;
     box-shadow: var(--card-shadow);
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
@@ -50,7 +115,7 @@ body {
 
 /* Active Trip Pulse & Card */
 .active-trip-card {
-    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+    background: linear-gradient(135deg, #1f4fa3 0%, #1296dc 100%);
     color: #ffffff;
     border: none;
 }
@@ -73,7 +138,7 @@ body {
 
 /* Photo Upload Box */
 .photo-upload-box {
-    border: 2px dashed #cbd5e1;
+    border: 2px dashed #b9cde8;
     border-radius: 10px;
     padding: 20px;
     text-align: center;
@@ -83,8 +148,8 @@ body {
 }
 
 .photo-upload-box:hover {
-    border-color: var(--primary-color);
-    background-color: #f1f5f9;
+    border-color: var(--accent-color);
+    background-color: #eef6fd;
 }
 
 .photo-preview-container {
@@ -97,7 +162,7 @@ body {
     max-height: 200px;
     border-radius: 8px;
     object-fit: cover;
-    border: 2px solid #e2e8f0;
+    border: 2px solid #dbe6f4;
 }
 
 /* Photo Thumbnails in Table/Timeline */
@@ -108,7 +173,7 @@ body {
     border-radius: 6px;
     cursor: pointer;
     transition: transform 0.15s ease, filter 0.15s ease;
-    border: 1px solid #cbd5e1;
+    border: 1px solid #b9cde8;
 }
 
 .odometer-thumb:hover {
@@ -130,7 +195,7 @@ body {
     bottom: 8px;
     left: 11px;
     width: 2px;
-    background-color: #e2e8f0;
+    background-color: #dbe6f4;
 }
 
 .timeline-item {
