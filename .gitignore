@@ -2,7 +2,12 @@ __pycache__/
 *.py[cod]
 venv/
 .venv/
-*/venv/
+**/venv/
+**/.venv/
 odometro.db
+*.sqlite
+*.sqlite3
 uploads/*
 !uploads/.gitkeep
+.DS_Store
+._*
