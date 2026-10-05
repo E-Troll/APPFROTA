@@ -10,6 +10,9 @@ from datetime import datetime, timedelta
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'odometro.db')
 
 
+INSPECTION_COLUMNS = ('origin_city', 'origin_br', 'dest_city', 'dest_br', 'action_type')
+
+
 def get_db(db_path=None):
     """Open a local SQLite connection or a Supabase PostgreSQL connection."""
     database_url = os.environ.get('DATABASE_URL')
@@ -90,6 +93,13 @@ def init_db(db_path=None):
         _execute(conn, 'CREATE INDEX IF NOT EXISTS idx_trips_status ON trips(status)')
         _execute(conn, 'CREATE INDEX IF NOT EXISTS idx_trips_plate ON trips(vehicle_plate)')
         _execute(conn, 'CREATE INDEX IF NOT EXISTS idx_stops_trip_id ON trip_stops(trip_id)')
+        for column in INSPECTION_COLUMNS:
+            if postgres:
+                _execute(conn, f'ALTER TABLE trips ADD COLUMN IF NOT EXISTS {column} TEXT')
+            else:
+                existing = {row['name'] for row in _execute(conn, 'PRAGMA table_info(trips)').fetchall()}
+                if column not in existing:
+                    _execute(conn, f'ALTER TABLE trips ADD COLUMN {column} TEXT')
     conn.close()
 
 
@@ -107,8 +117,9 @@ def create_trip(data, db_path=None):
         cursor = _execute(conn, """
             INSERT INTO trips (
                 vehicle_plate, vehicle_model, driver_name, purpose,
-                start_time, start_km, start_photo, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'EM_ANDAMENTO', ?, ?)
+                start_time, start_km, start_photo, origin_city, origin_br, action_type,
+                status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'EM_ANDAMENTO', ?, ?)
         """, (
             data['vehicle_plate'].strip().upper(),
             data.get('vehicle_model', '').strip(),
@@ -117,6 +128,9 @@ def create_trip(data, db_path=None):
             start_time,
             float(data['start_km']),
             data['start_photo'],
+            data.get('origin_city', '').strip(),
+            data.get('origin_br', '').strip(),
+            data.get('action_type', '').strip(),
             now,
             now
         ))
@@ -206,9 +220,13 @@ def finish_trip(trip_id, data, db_path=None):
     with conn:
         _execute(conn, """
             UPDATE trips
-            SET end_time = ?, end_km = ?, end_photo = ?, total_km = ?, status = 'FINALIZADA', updated_at = ?
+            SET end_time = ?, end_km = ?, end_photo = ?, total_km = ?, dest_city = ?, dest_br = ?,
+                status = 'FINALIZADA', updated_at = ?
             WHERE id = ?
-        """, (data.get('end_time') or now, end_km, data['end_photo'], total_km, now, trip_id))
+        """, (
+            data.get('end_time') or now, end_km, data['end_photo'], total_km,
+            data.get('dest_city', '').strip(), data.get('dest_br', '').strip(), now, trip_id
+        ))
     conn.close()
     return total_km
 
@@ -277,8 +295,8 @@ def list_trips(month=None, search=None, status=None, db_path=None):
         params.append(status.strip())
     if search and search.strip():
         term = f"%{search.strip()}%"
-        query += ' AND (t.vehicle_plate LIKE ? OR t.driver_name LIKE ? OR t.purpose LIKE ?)'
-        params.extend([term, term, term])
+        query += ' AND (t.vehicle_plate LIKE ? OR t.origin_city LIKE ? OR t.dest_city LIKE ? OR t.action_type LIKE ? OR t.driver_name LIKE ?)'
+        params.extend([term] * 5)
     query += ' GROUP BY t.id ORDER BY t.start_time DESC, t.id DESC'
 
     trips = []
