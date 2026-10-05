@@ -90,11 +90,11 @@ async function checkActiveTrip() {
 
             // Populate Active Trip Card
             document.getElementById('activePlate').textContent = currentActiveTrip.vehicle_plate;
-            document.getElementById('activeDriver').textContent = currentActiveTrip.driver_name;
-            document.getElementById('activeModel').textContent = currentActiveTrip.vehicle_model || '-';
+            document.getElementById('activeDriver').textContent = [currentActiveTrip.origin_city, currentActiveTrip.origin_br ? 'BR-' + currentActiveTrip.origin_br : ''].filter(Boolean).join(' / ') || '-';
+            document.getElementById('activeModel').textContent = currentActiveTrip.action_type || '-';
             document.getElementById('activeStartTime').textContent = formatDateTime(currentActiveTrip.start_time);
             document.getElementById('activeStartKm').textContent = `${formatNumber(currentActiveTrip.start_km)} KM`;
-            document.getElementById('activePurpose').textContent = currentActiveTrip.purpose || 'Sem finalidade informada.';
+            document.getElementById('activePurpose').textContent = currentActiveTrip.purpose || 'Sem observações.';
 
             // Photo thumb
             const thumb = document.getElementById('activeStartPhotoThumb');
@@ -522,7 +522,7 @@ function renderTripsTable(trips) {
             </td>
             <td>
                 <span class="fw-bold font-monospace text-uppercase">${escapeHtml(t.vehicle_plate)}</span>
-                <small class="d-block text-muted">${escapeHtml(t.driver_name)}</small>
+                <small class="d-block text-muted">${escapeHtml(t.origin_city || '-')} (BR-${escapeHtml(t.origin_br || '-')}) &rarr; ${escapeHtml(t.dest_city || '-')}${t.dest_br ? ' (BR-' + escapeHtml(t.dest_br) + ')' : ''}</small>
             </td>
             <td>
                 <div class="d-flex align-items-center gap-2">
@@ -574,12 +574,12 @@ async function viewTripDetails(tripId) {
         let timelineHtml = `
             <div class="row g-3 mb-4">
                 <div class="col-sm-4">
-                    <small class="text-muted d-block">Condutor</small>
-                    <strong class="fs-6">${escapeHtml(t.driver_name)}</strong>
+                    <small class="text-muted d-block">Origem</small>
+                    <strong class="fs-6">${escapeHtml(t.origin_city || '-')} (BR-${escapeHtml(t.origin_br || '-')})</strong>
                 </div>
                 <div class="col-sm-4">
-                    <small class="text-muted d-block">Modelo do Veículo</small>
-                    <span>${escapeHtml(t.vehicle_model || '-')}</span>
+                    <small class="text-muted d-block">Destino / Tipo de Ação</small>
+                    <span>${escapeHtml(t.dest_city || '-')}${t.dest_br ? ' (BR-' + escapeHtml(t.dest_br) + ')' : ''} &bull; ${escapeHtml(t.action_type || '-')}</span>
                 </div>
                 <div class="col-sm-4">
                     <small class="text-muted d-block">Distância Total Percorrida</small>
