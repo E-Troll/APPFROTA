@@ -1,0 +1,116 @@
+name: Wire APPFROTA Supabase storage
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/wire-storage.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire-storage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Wire Supabase upload and 45-day cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import re
+
+          p = Path('app.py')
+          s = p.read_text()
+          changes = [
+              ('import csv\n', 'import csv\nimport hmac\n'),
+              ('    Response, abort, make_response\n', '    Response, abort, make_response, redirect\n'),
+              ('    process_and_save_odometer_photo, delete_image_file, allowed_file,\n', '    process_and_save_odometer_photo, allowed_file,\n'),
+              ('from services.export_pdf import generate_trips_pdf\n', 'from services.export_pdf import generate_trips_pdf\nfrom services.supabase_storage import delete_photos, is_configured as storage_is_configured, signed_photo_url, store_photo\n'),
+              ("    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)\n", "    if storage_is_configured():\n        return redirect(signed_photo_url(filename))\n    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)\n"),
+              ("        for p in photos:\n            delete_image_file(p, upload_folder=app.config['UPLOAD_FOLDER'])\n", "        delete_photos(photos, upload_folder=app.config['UPLOAD_FOLDER'])\n"),
+          ]
+          for old, new in changes:
+              if old not in s:
+                  raise RuntimeError('app.py expected snippet not found: ' + old[:60])
+              s = s.replace(old, new, 1)
+          s, count = re.subn(
+              r"(        saved_filename = process_and_save_odometer_photo\([\s\S]*?        \))",
+              r"\1\n        saved_filename = store_photo(saved_filename, app.config['UPLOAD_FOLDER'])",
+              s,
+          )
+          if count != 3:
+              raise RuntimeError(f'Expected three image-processing routes; found {count}')
+          route = (
+              "@app.route('/api/cron/cleanup', methods=['GET'])\n"
+              "def api_cleanup_expired_trips():\n"
+              "    secret = os.environ.get('CRON_SECRET')\n"
+              "    if not secret:\n"
+              "        return jsonify({'success': False, 'error': 'CRON_SECRET não configurado.'}), 503\n"
+              "    if not hmac.compare_digest(request.headers.get('Authorization', ''), f'Bearer {secret}'):\n"
+              "        return jsonify({'success': False, 'error': 'Não autorizado.'}), 401\n"
+              "    deleted_trips, photos = database.delete_expired_trips(days=45)\n"
+              "    delete_photos(photos, upload_folder=app.config['UPLOAD_FOLDER'])\n"
+              "    return jsonify({'success': True, 'deleted_trips': deleted_trips, 'deleted_photos': len(photos)})\n\n\n"
+          )
+          marker = "if __name__ == '__main__':\n"
+          if s.count(marker) != 1:
+              raise RuntimeError('app.py main marker mismatch')
+          s = s.replace(marker, route + marker, 1)
+          p.write_text(s)
+
+          p = Path('api/index.py')
+          s = p.read_text()
+          old = 'if os.environ.get("VERCEL") == "1":\n    database.DEFAULT_DB_PATH = os.path.join(tempfile.gettempdir(), "appfrota.db")\n'
+          new = ('if os.environ.get("VERCEL") == "1":\n'
+                 '    required = ("DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "CRON_SECRET")\n'
+                 '    missing = [name for name in required if not os.environ.get(name)]\n'
+                 '    if missing:\n'
+                 '        raise RuntimeError("Missing Vercel environment variables: " + ", ".join(missing))\n'
+                 '    database.DEFAULT_DB_PATH = os.path.join(tempfile.gettempdir(), "appfrota.db")\n')
+          if old not in s:
+              raise RuntimeError('api/index.py expected environment block missing')
+          p.write_text(s.replace(old, new, 1))
+
+          p = Path('vercel.json')
+          config = json.loads(p.read_text())
+          config['crons'] = [{'path': '/api/cron/cleanup', 'schedule': '0 6 * * *'}]
+          p.write_text(json.dumps(config, indent=2) + '\n')
+
+          p = Path('README.md')
+          s = p.read_text()
+          start = s.index('## Deploy na Vercel')
+          end = s.index('\n## Testes', start)
+          section = '''## Deploy na Vercel
+
+O `vercel.json` encaminha as rotas para a aplicação Flask em `api/index.py`. Os assets ficam em `public/static/`. Banco e fotos usam Supabase PostgreSQL e Storage privado. As imagens são convertidas para JPEG, limitadas a 1280 px e comprimidas com alvo de 220 KiB.
+
+### Configuração Supabase/Vercel
+
+1. Crie um projeto Supabase e um bucket **privado** chamado `odometer-photos` (ou configure `SUPABASE_STORAGE_BUCKET`).
+2. Em Supabase > Project Settings > Database, copie a connection string PostgreSQL (Session pooler recomendado para serverless) e configure na Vercel como `DATABASE_URL`; use SSL (`sslmode=require`).
+3. Configure `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` na Vercel. A chave service-role deve permanecer apenas no servidor; não a coloque no frontend.
+4. Configure `CRON_SECRET` como valor aleatório forte. A rotina diária em `vercel.json` remove viagens e fotos com mais de 45 dias (a exclusão ocorre na execução diária seguinte).
+5. Faça novo deploy após salvar as variáveis. A inicialização da aplicação na Vercel exige essas configurações.
+
+O plano gratuito Supabase informa 500 MB de banco e 1 GB de Storage; a quantidade real de fotos varia conforme o tamanho final e o espaço já utilizado. Consulte os limites atuais na página de preços Supabase.
+'''
+          p.write_text(s[:start] + section + s[end:])
+          PY
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          git rm -- .github/workflows/wire-storage.yml
+          git add app.py api/index.py vercel.json README.md services/image_service.py services/supabase_storage.py database.py requirements.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Use Supabase storage with 45-day image retention" \
+            -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push origin HEAD:main
