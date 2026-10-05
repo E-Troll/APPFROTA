@@ -6,19 +6,21 @@ Main Flask application routing, API endpoints, file uploads and report exports.
 import os
 import io
 import csv
+import hmac
 from datetime import datetime
 from flask import (
     Flask, render_template, request, jsonify, send_from_directory,
-    Response, abort, make_response
+    Response, abort, make_response, redirect
 )
 
 import database
 from services.image_service import (
-    process_and_save_odometer_photo, delete_image_file, allowed_file,
+    process_and_save_odometer_photo, allowed_file,
     DEFAULT_UPLOAD_FOLDER
 )
 from services.export_excel import generate_trips_excel
 from services.export_pdf import generate_trips_pdf
+from services.supabase_storage import delete_photos, is_configured as storage_is_configured, signed_photo_url, store_photo
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
@@ -44,6 +46,8 @@ def index():
 @app.route('/uploads/<path:filename>')
 def serve_upload(filename):
     """Serves uploaded odometer photos securely."""
+    if storage_is_configured():
+        return redirect(signed_photo_url(filename))
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 
@@ -110,6 +114,7 @@ def api_start_trip():
             timestamp_str=start_time,
             upload_folder=app.config['UPLOAD_FOLDER']
         )
+        saved_filename = store_photo(saved_filename, app.config['UPLOAD_FOLDER'])
 
         trip_id = database.create_trip({
             'vehicle_plate': plate,
@@ -187,6 +192,7 @@ def api_add_stop(trip_id):
             timestamp_str=stop_time,
             upload_folder=app.config['UPLOAD_FOLDER']
         )
+        saved_filename = store_photo(saved_filename, app.config['UPLOAD_FOLDER'])
 
         stop_id = database.add_stop_to_trip(trip_id, {
             'stop_time': stop_time,
@@ -259,6 +265,7 @@ def api_finish_trip(trip_id):
             timestamp_str=end_time,
             upload_folder=app.config['UPLOAD_FOLDER']
         )
+        saved_filename = store_photo(saved_filename, app.config['UPLOAD_FOLDER'])
 
         total_km = database.finish_trip(trip_id, {
             'end_time': end_time,
@@ -296,8 +303,7 @@ def api_delete_trip(trip_id):
     """Exclui uma viagem e remove suas fotos do servidor."""
     try:
         photos = database.delete_trip(trip_id)
-        for p in photos:
-            delete_image_file(p, upload_folder=app.config['UPLOAD_FOLDER'])
+        delete_photos(photos, upload_folder=app.config['UPLOAD_FOLDER'])
         return jsonify({'success': True, 'message': 'Viagem excluída com sucesso.'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -431,6 +437,18 @@ def export_csv():
     response.headers['Content-Type'] = 'text/csv; charset=utf-8-sig'
     response.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
+
+
+@app.route('/api/cron/cleanup', methods=['GET'])
+def api_cleanup_expired_trips():
+    secret = os.environ.get('CRON_SECRET')
+    if not secret:
+        return jsonify({'success': False, 'error': 'CRON_SECRET não configurado.'}), 503
+    if not hmac.compare_digest(request.headers.get('Authorization', ''), f'Bearer {secret}'):
+        return jsonify({'success': False, 'error': 'Não autorizado.'}), 401
+    deleted_trips, photos = database.delete_expired_trips(days=45)
+    delete_photos(photos, upload_folder=app.config['UPLOAD_FOLDER'])
+    return jsonify({'success': True, 'deleted_trips': deleted_trips, 'deleted_photos': len(photos)})
 
 
 if __name__ == '__main__':

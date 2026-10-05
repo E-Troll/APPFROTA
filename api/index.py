@@ -8,6 +8,10 @@ sys.path.insert(0, PROJECT_ROOT)
 import database
 
 if os.environ.get("VERCEL") == "1":
+    required = ("DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "CRON_SECRET")
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("Missing Vercel environment variables: " + ", ".join(missing))
     database.DEFAULT_DB_PATH = os.path.join(tempfile.gettempdir(), "appfrota.db")
 
 from app import app
