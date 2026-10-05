@@ -1,0 +1,137 @@
+name: Configure APPFROTA with Supabase
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/configure-supabase.yml
+
+permissions:
+  contents: write
+
+jobs:
+  configure-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Add Supabase storage, 45-day cleanup and optimize photos
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          image_path = Path('services/image_service.py')
+          image = image_path.read_text()
+          image = image.replace('import os\nimport uuid', 'import io\nimport os\nimport uuid', 1)
+          image = image.replace('max_dim = 1920', 'max_dim = 1280', 1)
+          image = image.replace("    final_img.save(file_path, 'JPEG', quality=88, optimize=True)\n", """    # Keep photos readable for odometer auditing while reducing storage use.
+              # Aim for <= 220 KiB; lower quality and resolution only when needed.
+              working_img = final_img
+              quality = 62
+              max_bytes = 220 * 1024
+              while True:
+                  output = io.BytesIO()
+                  working_img.save(
+                      output, 'JPEG', quality=quality, optimize=True,
+                      progressive=True, subsampling=2
+                  )
+                  if output.tell() <= max_bytes:
+                      break
+                  longest_side = max(working_img.size)
+                  if quality > 42:
+                      quality = max(42, quality - 8)
+                  elif longest_side > 720:
+                      scale = max(720 / longest_side, 0.85)
+                      new_size = (max(1, int(working_img.width * scale)), max(1, int(working_img.height * scale)))
+                      working_img = working_img.resize(new_size, Image.Resampling.LANCZOS)
+                      quality = 54
+                  else:
+                      break
+
+              with open(file_path, 'wb') as image_file:
+                  image_file.write(output.getvalue())
+""", 1)
+          if 'max_bytes = 220 * 1024' not in image:
+              raise RuntimeError('Photo compression patch did not apply')
+          image_path.write_text(image)
+
+          app_path = Path('app.py')
+          app = app_path.read_text()
+          app = app.replace('import csv\n', 'import csv\nimport hmac\n', 1)
+          app = app.replace('from datetime import datetime\n', 'from datetime import datetime\n', 1)
+          app = app.replace('    Response, abort, make_response\n', '    Response, abort, make_response, redirect\n', 1)
+          app = app.replace('    process_and_save_odometer_photo, delete_image_file, allowed_file,\n', '    process_and_save_odometer_photo, allowed_file,\n', 1)
+          app = app.replace('from services.export_pdf import generate_trips_pdf\n', 'from services.export_pdf import generate_trips_pdf\nfrom services.supabase_storage import delete_photos, is_configured as storage_is_configured, signed_photo_url, store_photo\n', 1)
+          app = app.replace('    return send_from_directory(app.config[\'UPLOAD_FOLDER\'], filename)\n', "    if storage_is_configured():\n        return redirect(signed_photo_url(filename))\n    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)\n", 1)
+          app, photo_calls = re.subn(
+              r"(        saved_filename = process_and_save_odometer_photo\([\s\S]*?        \))",
+              r"\1\n        saved_filename = store_photo(saved_filename, app.config['UPLOAD_FOLDER'])",
+              app,
+          )
+          if photo_calls != 3:
+              raise RuntimeError(f'Expected 3 processed photo uploads, found {photo_calls}')
+          app = app.replace(
+              "        for p in photos:\n            delete_image_file(p, upload_folder=app.config['UPLOAD_FOLDER'])\n",
+              "        delete_photos(photos, upload_folder=app.config['UPLOAD_FOLDER'])\n",
+              1,
+          )
+          cron_route = '''@app.route('/api/cron/cleanup', methods=['GET'])
+          def api_cleanup_expired_trips():
+              """Remove trips and their photos after the 45-day retention period."""
+              secret = os.environ.get('CRON_SECRET')
+              if not secret:
+                  return jsonify({'success': False, 'error': 'CRON_SECRET não configurado.'}), 503
+              authorization = request.headers.get('Authorization', '')
+              if not hmac.compare_digest(authorization, f'Bearer {secret}'):
+                  return jsonify({'success': False, 'error': 'Não autorizado.'}), 401
+
+              deleted_trips, photos = database.delete_expired_trips(days=45)
+              delete_photos(photos, upload_folder=app.config['UPLOAD_FOLDER'])
+              return jsonify({'success': True, 'deleted_trips': deleted_trips, 'deleted_photos': len(photos)})
+
+
+          '''
+          app, route_insertions = app.replace("if __name__ == '__main__':\n", cron_route + "if __name__ == '__main__':\n", 1), app.count("if __name__ == '__main__':\n")
+          if route_insertions != 1 or 'delete_image_file' in app:
+              raise RuntimeError('Could not safely patch Flask routes')
+          app_path.write_text(app)
+
+          entry_path = Path('api/index.py')
+          entry = entry_path.read_text()
+          entry = entry.replace(
+              "if os.environ.get(\"VERCEL\") == \"1\":\n    database.DEFAULT_DB_PATH = os.path.join(tempfile.gettempdir(), \"appfrota.db\")\n",
+              "if os.environ.get(\"VERCEL\") == \"1\":\n    required = (\"DATABASE_URL\", \"SUPABASE_URL\", \"SUPABASE_SERVICE_ROLE_KEY\", \"CRON_SECRET\")\n    missing = [name for name in required if not os.environ.get(name)]\n    if missing:\n        raise RuntimeError(\"Missing Vercel environment variables: \" + \", \".join(missing))\n    database.DEFAULT_DB_PATH = os.path.join(tempfile.gettempdir(), \"appfrota.db\")\n",
+              1,
+          )
+          entry_path.write_text(entry)
+
+          import json
+          config_path = Path('vercel.json')
+          config = json.loads(config_path.read_text())
+          config['crons'] = [{'path': '/api/cron/cleanup', 'schedule': '0 6 * * *'}]
+          config_path.write_text(json.dumps(config, indent=2) + '\\n')
+
+          readme_path = Path('README.md')
+          readme = readme_path.read_text()
+          old = "O `vercel.json` encaminha as rotas para a aplicação Flask em `api/index.py`. Os assets web ficam em `public/static/` para entrega estática pela Vercel. A função usa `/tmp` para permitir que o SQLite e os uploads funcionem em tempo de execução.\\n\\n**Importante:** o disco da Vercel é temporário e compartilhado apenas dentro da instância da função. O banco e as fotos podem desaparecer ou não estar disponíveis entre invocações. Para uso real em produção, configure um banco persistente e armazenamento de objetos (por exemplo, Postgres e Vercel Blob) antes de registrar dados importantes."
+          new = "O `vercel.json` encaminha as rotas para a aplicação Flask em `api/index.py`. Os assets ficam em `public/static/`. Os dados e as fotos são armazenados no Supabase (PostgreSQL e Storage privado); as imagens são otimizadas para no máximo 1280 px e o processamento tenta mantê-las abaixo de 220 KiB.\\n\\n### Configuração Supabase/Vercel\\n\\n1. Crie um projeto Supabase e um bucket **privado** chamado `odometer-photos` (ou configure `SUPABASE_STORAGE_BUCKET`).\\n2. Em Supabase > Project Settings > Database, copie a connection string PostgreSQL (preferencialmente Session pooler para funções serverless) e configure na Vercel como `DATABASE_URL`. Inclua `sslmode=require` na conexão se ela não vier com SSL habilitado.\\n3. Configure também `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` nas variáveis de ambiente da Vercel. A chave service-role fica somente no servidor; nunca a exponha no JavaScript ou em variáveis `NEXT_PUBLIC_*`.\\n4. Defina `CRON_SECRET` na Vercel com um valor aleatório forte. A rotina diária configurada em `vercel.json` apaga viagens e fotos com mais de 45 dias; como roda uma vez ao dia, a remoção pode ocorrer algumas horas depois de completar 45 dias.\\n5. Faça um novo deploy depois de salvar as variáveis. O app exige essas configurações no Vercel e não usa `/tmp` como armazenamento permanente.\\n\\nO plano gratuito Supabase informa 500 MB de banco e 1 GB de Storage; o limite de fotos depende da compressão efetiva e do espaço usado por outros arquivos. Verifique a página de preços do Supabase para limites atualizados."
+          if old not in readme:
+              raise RuntimeError('README Vercel section did not match expected text')
+          readme_path.write_text(readme.replace(old, new, 1))
+          PY
+          python -m pip install -r requirements.txt
+          python -m unittest discover -s tests -v
+          git rm -- .github/workflows/configure-supabase.yml
+          git add app.py database.py requirements.txt services/image_service.py services/supabase_storage.py api/index.py vercel.json README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Persist APPFROTA data with Supabase and optimize photos" \
+            -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push origin HEAD:main
