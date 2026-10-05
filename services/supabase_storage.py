@@ -8,16 +8,27 @@ from services.image_service import delete_image_file
 BUCKET_NAME = os.environ.get('SUPABASE_STORAGE_BUCKET', 'odometer-photos')
 
 
+def _service_key():
+    return (
+        os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
+        or os.environ.get('SUPABASE_SECRET_KEY')
+        or os.environ.get('SUPABASE_SERVICE_KEY')
+    )
+
+
 def is_configured():
-    return bool(os.environ.get('SUPABASE_URL') and os.environ.get('SUPABASE_SERVICE_ROLE_KEY'))
+    return bool(os.environ.get('SUPABASE_URL') and _service_key())
 
 
 @lru_cache(maxsize=1)
 def _client():
     url = os.environ.get('SUPABASE_URL')
-    key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
+    key = _service_key()
     if not url or not key:
-        raise RuntimeError('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for photo storage.')
+        raise RuntimeError(
+            'SUPABASE_URL and a server-side Supabase key '
+            '(SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY) are required for photo storage.'
+        )
     from supabase import create_client
 
     return create_client(url, key)
@@ -27,7 +38,7 @@ def store_photo(filename, upload_folder):
     """Upload a processed JPEG to the private bucket, returning its object key."""
     if not is_configured():
         if os.environ.get('VERCEL') == '1':
-            raise RuntimeError('Configure Supabase Storage environment variables before uploading photos.')
+            raise RuntimeError('Configure Supabase Storage server-side environment variables before uploading photos.')
         return filename
 
     path = os.path.join(upload_folder, os.path.basename(filename))
