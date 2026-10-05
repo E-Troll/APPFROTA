@@ -18,7 +18,7 @@ from services.image_service import (
     process_and_save_odometer_photo, allowed_file,
     DEFAULT_UPLOAD_FOLDER
 )
-from services.export_excel import generate_trips_excel
+from services.export_excel import generate_trips_excel, parse_dt
 from services.export_pdf import generate_trips_pdf
 from services.supabase_storage import delete_photos, is_configured as storage_is_configured, signed_photo_url, store_photo
 
@@ -70,14 +70,19 @@ def api_start_trip():
         driver = request.form.get('driver_name', '').strip()
         model = request.form.get('vehicle_model', '').strip()
         purpose = request.form.get('purpose', '').strip()
+        origin_city = request.form.get('origin_city', '').strip()
+        origin_br = request.form.get('origin_br', '').strip()
+        action_type = request.form.get('action_type', '').strip()
         start_km_raw = request.form.get('start_km', '').strip().replace(',', '.')
         start_time = request.form.get('start_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
         # Validation
         if not plate:
-            return jsonify({'success': False, 'error': 'A placa do veículo é obrigatória.'}), 400
-        if not driver:
-            return jsonify({'success': False, 'error': 'O nome do condutor é obrigatório.'}), 400
+            return jsonify({'success': False, 'error': 'O recurso (sigla) é obrigatório.'}), 400
+        if not origin_city:
+            return jsonify({'success': False, 'error': 'A cidade de origem é obrigatória.'}), 400
+        if not origin_br:
+            return jsonify({'success': False, 'error': 'A BR de origem é obrigatória.'}), 400
         if not start_km_raw:
             return jsonify({'success': False, 'error': 'A quilometragem inicial é obrigatória.'}), 400
 
@@ -93,7 +98,7 @@ def api_start_trip():
         if active:
             return jsonify({
                 'success': False,
-                'error': f"Já existe uma viagem em andamento (Placa: {active['vehicle_plate']}, ID #{active['id']}). Finalize-a antes de iniciar outra."
+                'error': f"Já existe uma viagem em andamento (Recurso: {active['vehicle_plate']}, ID #{active['id']}). Finalize-a antes de iniciar outra."
             }), 400
 
         # Photo validation
@@ -123,7 +128,10 @@ def api_start_trip():
             'purpose': purpose,
             'start_time': start_time,
             'start_km': start_km,
-            'start_photo': saved_filename
+            'start_photo': saved_filename,
+            'origin_city': origin_city,
+            'origin_br': origin_br,
+            'action_type': action_type
         })
 
         return jsonify({
@@ -223,7 +231,11 @@ def api_finish_trip(trip_id):
 
         end_km_raw = request.form.get('end_km', '').strip().replace(',', '.')
         end_time = request.form.get('end_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        dest_city = request.form.get('dest_city', '').strip()
+        dest_br = request.form.get('dest_br', '').strip()
 
+        if not dest_city or not dest_br:
+            return jsonify({'success': False, 'error': 'A cidade e a BR de destino são obrigatórias.'}), 400
         if not end_km_raw:
             return jsonify({'success': False, 'error': 'A quilometragem final é obrigatória.'}), 400
 
@@ -270,7 +282,9 @@ def api_finish_trip(trip_id):
         total_km = database.finish_trip(trip_id, {
             'end_time': end_time,
             'end_km': end_km,
-            'end_photo': saved_filename
+            'end_photo': saved_filename,
+            'dest_city': dest_city,
+            'dest_br': dest_br
         })
 
         return jsonify({
@@ -399,34 +413,39 @@ def export_csv():
 
     writer = csv.writer(output, delimiter=';')
     writer.writerow([
-        'ID Viagem', 'Data Início', 'Placa', 'Modelo Veículo', 'Condutor',
-        'Finalidade / Rota', 'KM Inicial', 'Foto Saída (Link)', 'Qtd Paradas',
-        'Detalhes Paradas', 'Data Término', 'KM Final', 'Foto Chegada (Link)',
-        'Total KM Percorrido', 'Status'
+        'Dia', 'Recurso (SIGLA)', 'Cidade Origem', 'Origem BR', 'Origem KM', 'Hora Saída',
+        'Cidade Destino', 'Destino BR', 'Destino KM', 'Hora Chegada', 'Tipo de Ação',
+        'Distância', 'Tempo de Deslocamento'
     ])
 
-    for t in trips:
-        stops = t.get('stops', [])
-        stops_summary = " | ".join(f"{s['stop_km']} km ({s['reason'] or 'Pausa'})" for s in stops) if stops else "-"
-        start_link = f"{base_url}/uploads/{t['start_photo']}" if t.get('start_photo') else "-"
-        end_link = f"{base_url}/uploads/{t['end_photo']}" if t.get('end_photo') else "-"
+    def fmt_km(value):
+        return str(value).replace('.', ',') if value is not None else ''
 
+    for t in sorted(trips, key=lambda item: (item.get('start_time') or '', item.get('id') or 0)):
+        start = parse_dt(t.get('start_time'))
+        end = parse_dt(t.get('end_time'))
+        same_br = t.get('origin_br') and t.get('origin_br') == t.get('dest_br')
+        distance = ''
+        if same_br and t.get('end_km') is not None:
+            distance = fmt_km(round(float(t['end_km']) - float(t['start_km']), 2))
+        elapsed = ''
+        if start and end:
+            minutes = int(((end - start).total_seconds() // 60) % 1440)
+            elapsed = f"{minutes // 60}:{minutes % 60:02d}"
         writer.writerow([
-            t.get('id'),
-            t.get('start_time', ''),
+            start.strftime('%d/%m/%Y') if start else '',
             t.get('vehicle_plate', ''),
-            t.get('vehicle_model', '') or '-',
-            t.get('driver_name', ''),
-            t.get('purpose', '') or '-',
-            str(t.get('start_km', '')).replace('.', ','),
-            start_link,
-            len(stops),
-            stops_summary,
-            t.get('end_time', '') or '-',
-            str(t.get('end_km', '')).replace('.', ',') if t.get('end_km') is not None else '-',
-            end_link,
-            str(t.get('total_km', '')).replace('.', ',') if t.get('total_km') is not None else '-',
-            t.get('status', '')
+            t.get('origin_city') or '',
+            t.get('origin_br') or '',
+            fmt_km(t.get('start_km')),
+            start.strftime('%H:%M') if start else '',
+            t.get('dest_city') or '',
+            t.get('dest_br') or '',
+            fmt_km(t.get('end_km')),
+            end.strftime('%H:%M') if end else '',
+            t.get('action_type') or '',
+            distance,
+            elapsed
         ])
 
     csv_data = output.getvalue().encode('utf-8-sig')
@@ -455,4 +474,3 @@ if __name__ == '__main__':
     print("Iniciando Servidor de Controle de Quilometragem...")
     print("Acesse no navegador: http://localhost:5050")
     app.run(host='0.0.0.0', port=5050, debug=True)
-
