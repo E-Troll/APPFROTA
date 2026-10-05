@@ -1,0 +1,178 @@
+/* Custom Styles for Vehicle Mileage Tracking Application */
+
+:root {
+    --primary-color: #1e3a8a;
+    --primary-hover: #1e40af;
+    --accent-color: #0284c7;
+    --success-color: #16a34a;
+    --warning-color: #d97706;
+    --danger-color: #dc2626;
+    --dark-bg: #0f172a;
+    --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+}
+
+body {
+    background-color: #f8fafc;
+    color: #1e293b;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Navbar */
+.navbar-brand {
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+/* Card Styling */
+.card {
+    border-radius: 12px;
+    border: 1px solid #e2e8f0;
+    box-shadow: var(--card-shadow);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* KPI Cards */
+.kpi-card {
+    border-left: 4px solid var(--primary-color);
+}
+.kpi-card.kpi-success {
+    border-left-color: var(--success-color);
+}
+.kpi-card.kpi-warning {
+    border-left-color: var(--warning-color);
+}
+.kpi-card.kpi-info {
+    border-left-color: var(--accent-color);
+}
+
+/* Active Trip Pulse & Card */
+.active-trip-card {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+    color: #ffffff;
+    border: none;
+}
+
+.pulse-badge {
+    animation: pulse-animation 2s infinite;
+}
+
+@keyframes pulse-animation {
+    0% {
+        box-shadow: 0 0 0 0 rgba(234, 179, 8, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(234, 179, 8, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(234, 179, 8, 0);
+    }
+}
+
+/* Photo Upload Box */
+.photo-upload-box {
+    border: 2px dashed #cbd5e1;
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    background-color: #ffffff;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+}
+
+.photo-upload-box:hover {
+    border-color: var(--primary-color);
+    background-color: #f1f5f9;
+}
+
+.photo-preview-container {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+}
+
+.photo-preview-img {
+    max-height: 200px;
+    border-radius: 8px;
+    object-fit: cover;
+    border: 2px solid #e2e8f0;
+}
+
+/* Photo Thumbnails in Table/Timeline */
+.odometer-thumb {
+    width: 52px;
+    height: 52px;
+    object-fit: cover;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: transform 0.15s ease, filter 0.15s ease;
+    border: 1px solid #cbd5e1;
+}
+
+.odometer-thumb:hover {
+    transform: scale(1.08);
+    filter: brightness(1.05);
+}
+
+/* Timeline in Details Modal */
+.timeline {
+    position: relative;
+    padding-left: 32px;
+    list-style: none;
+}
+
+.timeline::before {
+    content: '';
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: 11px;
+    width: 2px;
+    background-color: #e2e8f0;
+}
+
+.timeline-item {
+    position: relative;
+    margin-bottom: 24px;
+}
+
+.timeline-item:last-child {
+    margin-bottom: 0;
+}
+
+.timeline-badge {
+    position: absolute;
+    left: -32px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    text-align: center;
+    line-height: 24px;
+    font-size: 11px;
+    color: #ffffff;
+    z-index: 1;
+}
+
+/* Lightbox Modal */
+.lightbox-img {
+    max-height: 75vh;
+    width: auto;
+    max-width: 100%;
+    margin: 0 auto;
+    display: block;
+    border-radius: 8px;
+}
+
+/* Mobile Tweaks */
+@media (max-width: 768px) {
+    .btn-responsive-group {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .btn-responsive-group .btn {
+        width: 100%;
+    }
+}

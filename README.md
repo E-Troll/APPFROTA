@@ -1,34 +1,16 @@
 # Controle de Quilometragem Veicular (App Veículo)
 
-Aplicação web Flask para registrar viagens de veículos, controlar saídas, paradas e chegadas com fotos do odômetro, consultar histórico e exportar relatórios em PDF, Excel e CSV.
+Aplicação Flask para registrar viagens de veículos, controlar saídas, paradas e chegadas com fotos do odômetro, consultar histórico e exportar relatórios em PDF, Excel e CSV.
 
-## Estrutura
+## Executar localmente
 
-```text
-app.py
- database.py
- requirements.txt
- run.sh
- services/       # processamento de imagens e exportação de relatórios
- static/         # CSS e JavaScript
- templates/      # interface web
- tests/          # testes automatizados
- uploads/        # fotos geradas durante o uso (não versionadas)
-```
-
-## Requisitos
-
-- Python 3.8 ou superior.
-
-## Executar
-
-Na raiz do repositório, execute:
+Requer Python 3.8 ou superior. Na raiz do repositório:
 
 ```bash
 bash run.sh
 ```
 
-O script cria o ambiente virtual, instala as dependências e inicia o servidor. Para instalação manual:
+Ou instale manualmente:
 
 ```bash
 python3 -m venv venv
@@ -37,11 +19,15 @@ pip install -r requirements.txt
 python app.py
 ```
 
-A aplicação fica disponível em <http://localhost:5050>. O banco SQLite (`odometro.db`) é criado automaticamente ao iniciar; o banco e as fotos de uso ficam locais e não são incluídos no Git.
+A aplicação local fica em <http://localhost:5050>. O banco e as fotos locais são mantidos na pasta do projeto.
+
+## Deploy na Vercel
+
+O `vercel.json` encaminha as rotas para a aplicação Flask em `api/index.py`. Os assets web ficam em `public/static/` para entrega estática pela Vercel. A função usa `/tmp` para permitir que o SQLite e os uploads funcionem em tempo de execução.
+
+**Importante:** o disco da Vercel é temporário e compartilhado apenas dentro da instância da função. O banco e as fotos podem desaparecer ou não estar disponíveis entre invocações. Para uso real em produção, configure um banco persistente e armazenamento de objetos (por exemplo, Postgres e Vercel Blob) antes de registrar dados importantes.
 
 ## Testes
-
-Com as dependências instaladas no ambiente virtual:
 
 ```bash
 python -m unittest discover -s tests -v
