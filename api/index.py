@@ -21,7 +21,11 @@ if os.environ.get("VERCEL") == "1":
         if os.environ.get(name)
     ), None)
     if database_url:
-        os.environ.setdefault("DATABASE_URL", database_url)
+        os.environ["DATABASE_URL"] = database_url
+    if not os.environ.get("SUPABASE_URL") and os.environ.get("NEXT_PUBLIC_SUPABASE_URL"):
+        os.environ["SUPABASE_URL"] = os.environ["NEXT_PUBLIC_SUPABASE_URL"]
+    if not os.environ.get("SUPABASE_SERVICE_ROLE_KEY") and os.environ.get("SUPABASE_SECRET_KEY"):
+        os.environ["SUPABASE_SERVICE_ROLE_KEY"] = os.environ["SUPABASE_SECRET_KEY"]
     database.DEFAULT_DB_PATH = os.path.join(tempfile.gettempdir(), "appfrota.db")
 
 from app import app
