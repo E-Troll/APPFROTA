@@ -73,11 +73,11 @@
 
                         <div class="row g-3 mb-3 text-white">
                             <div class="col-md-3 col-6">
-                                <small class="text-white-50 d-block">Condutor</small>
+                                <small class="text-white-50 d-block">Origem (Cidade / BR)</small>
                                 <span class="fw-bold fs-6" id="activeDriver">-</span>
                             </div>
                             <div class="col-md-3 col-6">
-                                <small class="text-white-50 d-block">Modelo do Veículo</small>
+                                <small class="text-white-50 d-block">Tipo de Ação</small>
                                 <span class="fw-semibold fs-6" id="activeModel">-</span>
                             </div>
                             <div class="col-md-3 col-6">
@@ -92,7 +92,7 @@
 
                         <div class="row g-3 mb-4">
                             <div class="col-md-6">
-                                <small class="text-white-50 d-block mb-1">Finalidade / Destino</small>
+                                <small class="text-white-50 d-block mb-1">Observações</small>
                                 <div class="bg-black bg-opacity-25 rounded p-2 text-white small" id="activePurpose">-</div>
                             </div>
                             <div class="col-md-6">
@@ -150,28 +150,14 @@
                         <form id="startTripForm" enctype="multipart/form-data">
                             <div class="row g-3 mb-3">
                                 <div class="col-md-6">
-                                    <label class="form-label fw-semibold">Placa do Veículo <span class="text-danger">*</span></label>
+                                    <label class="form-label fw-semibold">Recurso (SIGLA) <span class="text-danger">*</span></label>
                                     <div class="input-group">
                                         <span class="input-group-text"><i class="bi bi-car-front-fill"></i></span>
-                                        <input type="text" class="form-control text-uppercase font-monospace fw-bold" name="vehicle_plate" id="startPlate" placeholder="ABC-1234 ou ABC1D23" required>
+                                        <input type="text" class="form-control text-uppercase font-monospace fw-bold" name="vehicle_plate" id="startPlate" placeholder="Ex: VTR-01" required>
                                     </div>
                                 </div>
                                 <div class="col-md-6">
-                                    <label class="form-label fw-semibold">Modelo / Descrição do Veículo</label>
-                                    <input type="text" class="form-control" name="vehicle_model" id="startModel" placeholder="Ex: Fiat Strada 1.3 Branco">
-                                </div>
-                            </div>
-
-                            <div class="row g-3 mb-3">
-                                <div class="col-md-6">
-                                    <label class="form-label fw-semibold">Nome do Condutor <span class="text-danger">*</span></label>
-                                    <div class="input-group">
-                                        <span class="input-group-text"><i class="bi bi-person-fill"></i></span>
-                                        <input type="text" class="form-control" name="driver_name" id="startDriver" placeholder="Ex: João da Silva" required>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label fw-semibold">Data e Hora de Saída</label>
+                                    <label class="form-label fw-semibold">Dia / Hora Saída</label>
                                     <div class="input-group">
                                         <span class="input-group-text"><i class="bi bi-calendar-event"></i></span>
                                         <input type="datetime-local" class="form-control" name="start_time" id="startTimeInput">
@@ -179,13 +165,24 @@
                                 </div>
                             </div>
 
+                            <div class="row g-3 mb-3">
+                                <div class="col-md-8">
+                                    <label class="form-label fw-semibold">Cidade (Origem) <span class="text-danger">*</span></label>
+                                    <input type="text" class="form-control" name="origin_city" id="startOriginCity" placeholder="Ex: Feira de Santana" required>
+                                </div>
+                                <div class="col-md-4">
+                                    <label class="form-label fw-semibold">BR (Origem) <span class="text-danger">*</span></label>
+                                    <input type="text" class="form-control" name="origin_br" id="startOriginBr" placeholder="Ex: 116" required>
+                                </div>
+                            </div>
+
                             <div class="mb-3">
-                                <label class="form-label fw-semibold">Finalidade / Destino da Viagem</label>
-                                <textarea class="form-control" name="purpose" id="startPurpose" rows="2" placeholder="Ex: Visita ao cliente X em Campinas para entrega de suprimentos"></textarea>
+                                <label class="form-label fw-semibold">Tipo de Ação</label>
+                                <input type="text" class="form-control" name="action_type" id="startActionType" placeholder="Ex: Inspeção">
                             </div>
 
                             <div class="mb-4">
-                                <label class="form-label fw-bold text-primary">Quilometragem Inicial do Odômetro (KM) <span class="text-danger">*</span></label>
+                                <label class="form-label fw-bold text-primary">KM (Origem) - Odômetro <span class="text-danger">*</span></label>
                                 <div class="input-group input-group-lg">
                                     <span class="input-group-text bg-light fw-bold">KM</span>
                                     <input type="number" step="0.1" min="0" class="form-control fw-bold fs-4 text-primary" name="start_km" id="startKm" placeholder="Ex: 45210.5" required>
@@ -262,7 +259,7 @@
                                 <label class="form-label small fw-semibold text-muted">Busca Rápida</label>
                                 <div class="input-group">
                                     <span class="input-group-text"><i class="bi bi-search"></i></span>
-                                    <input type="text" class="form-control" id="filterSearch" placeholder="Placa, condutor ou destino..." oninput="debounceLoadTrips()">
+                                    <input type="text" class="form-control" id="filterSearch" placeholder="Recurso, cidade ou tipo de ação..." oninput="debounceLoadTrips()">
                                 </div>
                             </div>
                             <!-- Export Buttons -->
@@ -354,7 +351,7 @@
                             <thead class="table-light small text-muted text-uppercase">
                                 <tr>
                                     <th class="ps-3">ID / Início</th>
-                                    <th>Veículo / Condutor</th>
+                                    <th>Recurso / Origem → Destino</th>
                                     <th>KM Inicial</th>
                                     <th>Paradas</th>
                                     <th>KM Final</th>
@@ -469,8 +466,24 @@
                             </div>
                         </div>
 
+                        <div class="row g-3 mb-3">
+                            <div class="col-8">
+                                <label class="form-label fw-semibold">Cidade (Destino) <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" name="dest_city" id="finishDestCity" placeholder="Ex: Salvador" required>
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label fw-semibold">BR (Destino) <span class="text-danger">*</span></label>
+                                <input type="text" class="form-control" name="dest_br" id="finishDestBr" placeholder="Ex: 116" required>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fw-semibold">Hora Chegada</label>
+                                <input type="datetime-local" class="form-control" name="end_time" id="finishTimeInput">
+                                <small class="text-muted">Em branco = agora.</small>
+                            </div>
+                        </div>
+
                         <div class="mb-3">
-                            <label class="form-label fw-bold">Quilometragem Final de Chegada (KM) <span class="text-danger">*</span></label>
+                            <label class="form-label fw-bold">KM (Destino) - Odômetro <span class="text-danger">*</span></label>
                             <input type="number" step="0.1" min="0" class="form-control form-control-lg fw-bold text-success" name="end_km" id="finishKmInput" placeholder="Ex: 45395.0" required oninput="calculateDistancePreview()">
                         </div>
 
@@ -488,7 +501,7 @@
                                 <input type="file" id="finishPhotoInput" name="photo" accept="image/*" capture="environment" class="d-none" required onchange="handlePhotoSelect(this, 'finishPreview', 'finishPhotoBoxContent')">
                                 <div id="finishPhotoBoxContent">
                                     <i class="bi bi-camera-fill fs-2 text-success mb-1 d-block"></i>
-                                    <span class="fw-bold d-block text-dark">Tirar Foto do Odômetro</span>
+                                    <span class="fw-bold d-block text-dark">Tirar Foto de Chegada</span>
                                     <small class="text-muted">A foto receberá carimbo com o timestamp de chegada.</small>
                                 </div>
                                 <div id="finishPreview" class="photo-preview-container d-none">
