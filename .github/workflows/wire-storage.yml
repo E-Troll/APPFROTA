@@ -65,31 +65,11 @@ jobs:
           config = json.loads(p.read_text())
           config['crons'] = [{'path': '/api/cron/cleanup', 'schedule': '0 6 * * *'}]
           p.write_text(json.dumps(config, indent=2) + '\n')
-
-          p = Path('README.md')
-          s = p.read_text()
-          start = s.index('## Deploy na Vercel')
-          end = s.index('\n## Testes', start)
-          section = '''## Deploy na Vercel
-
-O `vercel.json` encaminha as rotas para a aplicação Flask em `api/index.py`; os assets ficam em `public/static/`. Banco e fotos usam Supabase PostgreSQL e Storage privado. As imagens viram JPEG, limitadas a 1280 px e comprimidas com alvo de 220 KiB.
-
-### Configuração Supabase/Vercel
-
-1. Crie um projeto Supabase e um bucket **privado** chamado `odometer-photos` (ou configure `SUPABASE_STORAGE_BUCKET`).
-2. Copie a connection string PostgreSQL em Supabase > Project Settings > Database (Session pooler recomendado para serverless) e configure `DATABASE_URL` na Vercel. Use SSL (`sslmode=require`).
-3. Configure `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY` na Vercel. Mantenha a chave service-role somente no servidor, nunca no frontend.
-4. Defina `CRON_SECRET` como valor aleatório forte. A rotina diária remove viagens e fotos após 45 dias; a exclusão pode ocorrer na execução diária seguinte.
-5. Faça novo deploy após configurar todas as variáveis. A função exige essas configurações.
-
-O plano gratuito Supabase informa 500 MB de banco e 1 GB de Storage; a quantidade de fotos varia com o tamanho final e o espaço já usado. Consulte os limites atuais na página de preços Supabase.
-'''
-          p.write_text(s[:start] + section + s[end:])
           PY
           python -m pip install -r requirements.txt
           python -m unittest discover -s tests -v
           git rm -- .github/workflows/wire-storage.yml
-          git add app.py api/index.py vercel.json README.md services/image_service.py services/supabase_storage.py database.py requirements.txt
+          git add app.py api/index.py vercel.json services/image_service.py services/supabase_storage.py database.py requirements.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Use Supabase storage with 45-day image retention" \
