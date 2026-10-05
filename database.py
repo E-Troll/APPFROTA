@@ -1,85 +1,110 @@
-"""
-Database Module for Vehicle Mileage Tracking Application
-Uses SQLite with foreign keys and index optimization.
+"""Database access for the vehicle mileage tracking application.
+
+Uses SQLite for local development and tests, and Supabase PostgreSQL in production.
 """
 
 import os
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'odometro.db')
 
 
 def get_db(db_path=None):
-    """Returns a SQLite connection with Row factory and foreign keys enabled."""
-    target_path = db_path or DEFAULT_DB_PATH
-    conn = sqlite3.connect(target_path)
+    """Open a local SQLite connection or a Supabase PostgreSQL connection."""
+    database_url = os.environ.get('DATABASE_URL')
+    if db_path is None and database_url:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        return psycopg.connect(database_url, row_factory=dict_row)
+
+    if db_path is None and os.environ.get('VERCEL') == '1':
+        raise RuntimeError('DATABASE_URL is required on Vercel. Configure the Supabase PostgreSQL connection string.')
+
+    conn = sqlite3.connect(db_path or DEFAULT_DB_PATH)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute('PRAGMA foreign_keys = ON;')
     return conn
 
 
+def _is_postgres(conn):
+    return conn.__class__.__module__.startswith('psycopg')
+
+
+def _execute(conn, query, params=()):
+    if _is_postgres(conn):
+        query = query.replace('?', '%s')
+    return conn.execute(query, params)
+
+
+def _last_insert_id(conn, cursor):
+    if _is_postgres(conn):
+        return _execute(conn, 'SELECT LASTVAL() AS id').fetchone()['id']
+    return cursor.lastrowid
+
+
 def init_db(db_path=None):
-    """Initializes tables and indexes in the SQLite database."""
+    """Create the tables and indexes if they do not already exist."""
     conn = get_db(db_path)
+    postgres = _is_postgres(conn)
+    trip_schema = """
+        CREATE TABLE IF NOT EXISTS trips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            vehicle_plate TEXT NOT NULL,
+            vehicle_model TEXT,
+            driver_name TEXT NOT NULL,
+            purpose TEXT,
+            start_time TEXT NOT NULL,
+            start_km REAL NOT NULL,
+            start_photo TEXT NOT NULL,
+            end_time TEXT,
+            end_km REAL,
+            end_photo TEXT,
+            total_km REAL,
+            status TEXT NOT NULL DEFAULT 'EM_ANDAMENTO',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """
+    stops_schema = """
+        CREATE TABLE IF NOT EXISTS trip_stops (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            stop_time TEXT NOT NULL,
+            stop_km REAL NOT NULL,
+            reason TEXT,
+            photo TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """
+    if postgres:
+        trip_schema = trip_schema.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'BIGSERIAL PRIMARY KEY')
+        stops_schema = stops_schema.replace('INTEGER PRIMARY KEY AUTOINCREMENT', 'BIGSERIAL PRIMARY KEY')
+        stops_schema = stops_schema.replace('trip_id INTEGER NOT NULL', 'trip_id BIGINT NOT NULL')
+
     with conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS trips (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                vehicle_plate TEXT NOT NULL,
-                vehicle_model TEXT,
-                driver_name TEXT NOT NULL,
-                purpose TEXT,
-                start_time TEXT NOT NULL,
-                start_km REAL NOT NULL,
-                start_photo TEXT NOT NULL,
-                end_time TEXT,
-                end_km REAL,
-                end_photo TEXT,
-                total_km REAL,
-                status TEXT NOT NULL DEFAULT 'EM_ANDAMENTO', -- 'EM_ANDAMENTO', 'FINALIZADA', 'CANCELADA'
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-        """)
-
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS trip_stops (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-                stop_time TEXT NOT NULL,
-                stop_km REAL NOT NULL,
-                reason TEXT,
-                photo TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-        """)
-
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_start_time ON trips(start_time);")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_status ON trips(status);")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_plate ON trips(vehicle_plate);")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_stops_trip_id ON trip_stops(trip_id);")
-
+        _execute(conn, trip_schema)
+        _execute(conn, stops_schema)
+        _execute(conn, 'CREATE INDEX IF NOT EXISTS idx_trips_start_time ON trips(start_time)')
+        _execute(conn, 'CREATE INDEX IF NOT EXISTS idx_trips_status ON trips(status)')
+        _execute(conn, 'CREATE INDEX IF NOT EXISTS idx_trips_plate ON trips(vehicle_plate)')
+        _execute(conn, 'CREATE INDEX IF NOT EXISTS idx_stops_trip_id ON trip_stops(trip_id)')
     conn.close()
 
 
 def row_to_dict(row):
-    """Converts a sqlite3.Row to a standard dictionary."""
     if row is None:
         return None
     return dict(row)
 
 
 def create_trip(data, db_path=None):
-    """
-    Creates a new trip in EM_ANDAMENTO status.
-    data dict keys: vehicle_plate, vehicle_model, driver_name, purpose, start_time, start_km, start_photo
-    """
     now = datetime.now().isoformat()
     start_time = data.get('start_time') or now
     conn = get_db(db_path)
     with conn:
-        cursor = conn.execute("""
+        cursor = _execute(conn, """
             INSERT INTO trips (
                 vehicle_plate, vehicle_model, driver_name, purpose,
                 start_time, start_km, start_photo, status, created_at, updated_at
@@ -95,250 +120,209 @@ def create_trip(data, db_path=None):
             now,
             now
         ))
-        trip_id = cursor.lastrowid
+        trip_id = _last_insert_id(conn, cursor)
     conn.close()
     return trip_id
 
 
 def get_trip_by_id(trip_id, db_path=None):
-    """Returns trip details along with its stops."""
     conn = get_db(db_path)
-    trip_row = conn.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
+    trip_row = _execute(conn, 'SELECT * FROM trips WHERE id = ?', (trip_id,)).fetchone()
     if not trip_row:
         conn.close()
         return None
-
     trip = row_to_dict(trip_row)
-    stops_rows = conn.execute(
-        "SELECT * FROM trip_stops WHERE trip_id = ? ORDER BY stop_km ASC, stop_time ASC",
+    stops = _execute(conn,
+        'SELECT * FROM trip_stops WHERE trip_id = ? ORDER BY stop_km ASC, stop_time ASC',
         (trip_id,)
     ).fetchall()
-    trip['stops'] = [row_to_dict(s) for s in stops_rows]
+    trip['stops'] = [row_to_dict(stop) for stop in stops]
     conn.close()
     return trip
 
 
 def get_active_trip(db_path=None):
-    """Returns the most recent active trip (status = 'EM_ANDAMENTO') or None."""
     conn = get_db(db_path)
-    row = conn.execute("""
-        SELECT * FROM trips
-        WHERE status = 'EM_ANDAMENTO'
+    row = _execute(conn, """
+        SELECT * FROM trips WHERE status = 'EM_ANDAMENTO'
         ORDER BY id DESC LIMIT 1
     """).fetchone()
-
     if not row:
         conn.close()
         return None
-
     trip = row_to_dict(row)
-    stops_rows = conn.execute(
-        "SELECT * FROM trip_stops WHERE trip_id = ? ORDER BY stop_km ASC, stop_time ASC",
+    stops = _execute(conn,
+        'SELECT * FROM trip_stops WHERE trip_id = ? ORDER BY stop_km ASC, stop_time ASC',
         (trip['id'],)
     ).fetchall()
-    trip['stops'] = [row_to_dict(s) for s in stops_rows]
+    trip['stops'] = [row_to_dict(stop) for stop in stops]
     conn.close()
     return trip
 
 
 def add_stop_to_trip(trip_id, data, db_path=None):
-    """
-    Adds a pause/stop to an active trip.
-    data dict keys: stop_time, stop_km, reason, photo
-    """
     now = datetime.now().isoformat()
     stop_time = data.get('stop_time') or now
     conn = get_db(db_path)
     with conn:
-        cursor = conn.execute("""
+        cursor = _execute(conn, """
             INSERT INTO trip_stops (trip_id, stop_time, stop_km, reason, photo, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            trip_id,
-            stop_time,
-            float(data['stop_km']),
-            data.get('reason', '').strip(),
-            data['photo'],
-            now
+            trip_id, stop_time, float(data['stop_km']),
+            data.get('reason', '').strip(), data['photo'], now
         ))
-        stop_id = cursor.lastrowid
-        conn.execute("UPDATE trips SET updated_at = ? WHERE id = ?", (now, trip_id))
+        stop_id = _last_insert_id(conn, cursor)
+        _execute(conn, 'UPDATE trips SET updated_at = ? WHERE id = ?', (now, trip_id))
     conn.close()
     return stop_id
 
 
 def finish_trip(trip_id, data, db_path=None):
-    """
-    Finishes a trip, calculates total distance, and updates status to FINALIZADA.
-    data dict keys: end_time, end_km, end_photo
-    """
     conn = get_db(db_path)
-    trip_row = conn.execute("SELECT start_km, status FROM trips WHERE id = ?", (trip_id,)).fetchone()
-    if not trip_row:
+    trip = _execute(conn, 'SELECT start_km, status FROM trips WHERE id = ?', (trip_id,)).fetchone()
+    if not trip:
         conn.close()
-        raise ValueError("Viagem não encontrada.")
-    if trip_row['status'] != 'EM_ANDAMENTO':
+        raise ValueError('Viagem não encontrada.')
+    if trip['status'] != 'EM_ANDAMENTO':
         conn.close()
-        raise ValueError("Esta viagem não está em andamento.")
+        raise ValueError('Esta viagem não está em andamento.')
 
-    start_km = float(trip_row['start_km'])
+    start_km = float(trip['start_km'])
     end_km = float(data['end_km'])
     if end_km < start_km:
         conn.close()
-        raise ValueError(f"Quilometragem final ({end_km} km) não pode ser menor que a inicial ({start_km} km).")
+        raise ValueError(f'Quilometragem final ({end_km} km) não pode ser menor que a inicial ({start_km} km).')
 
-    # Check stops as well
-    highest_stop = conn.execute("SELECT MAX(stop_km) as max_km FROM trip_stops WHERE trip_id = ?", (trip_id,)).fetchone()
-    if highest_stop and highest_stop['max_km'] is not None:
-        if end_km < float(highest_stop['max_km']):
-            conn.close()
-            raise ValueError(f"Quilometragem final ({end_km} km) não pode ser menor que a parada ({highest_stop['max_km']} km).")
+    highest_stop = _execute(conn,
+        'SELECT MAX(stop_km) AS max_km FROM trip_stops WHERE trip_id = ?', (trip_id,)
+    ).fetchone()
+    if highest_stop and highest_stop['max_km'] is not None and end_km < float(highest_stop['max_km']):
+        conn.close()
+        raise ValueError(f"Quilometragem final ({end_km} km) não pode ser menor que a parada ({highest_stop['max_km']} km).")
 
     total_km = round(end_km - start_km, 2)
     now = datetime.now().isoformat()
-    end_time = data.get('end_time') or now
-
     with conn:
-        conn.execute("""
+        _execute(conn, """
             UPDATE trips
             SET end_time = ?, end_km = ?, end_photo = ?, total_km = ?, status = 'FINALIZADA', updated_at = ?
             WHERE id = ?
-        """, (
-            end_time,
-            end_km,
-            data['end_photo'],
-            total_km,
-            now,
-            trip_id
-        ))
+        """, (data.get('end_time') or now, end_km, data['end_photo'], total_km, now, trip_id))
     conn.close()
     return total_km
 
 
 def cancel_trip(trip_id, db_path=None):
-    """Cancels an in-progress trip."""
     now = datetime.now().isoformat()
     conn = get_db(db_path)
     with conn:
-        conn.execute("""
-            UPDATE trips SET status = 'CANCELADA', updated_at = ? WHERE id = ?
-        """, (now, trip_id))
+        _execute(conn, "UPDATE trips SET status = 'CANCELADA', updated_at = ? WHERE id = ?", (now, trip_id))
     conn.close()
     return True
 
 
 def delete_trip(trip_id, db_path=None):
-    """Deletes a trip from the database and returns list of photos to delete from disk."""
     conn = get_db(db_path)
-    trip = conn.execute("SELECT start_photo, end_photo FROM trips WHERE id = ?", (trip_id,)).fetchone()
+    trip = _execute(conn, 'SELECT start_photo, end_photo FROM trips WHERE id = ?', (trip_id,)).fetchone()
     if not trip:
         conn.close()
         return []
-
-    photos = []
-    if trip['start_photo']:
-        photos.append(trip['start_photo'])
-    if trip['end_photo']:
-        photos.append(trip['end_photo'])
-
-    stops = conn.execute("SELECT photo FROM trip_stops WHERE trip_id = ?", (trip_id,)).fetchall()
-    for s in stops:
-        if s['photo']:
-            photos.append(s['photo'])
-
+    photos = [photo for photo in (trip['start_photo'], trip['end_photo']) if photo]
+    stops = _execute(conn, 'SELECT photo FROM trip_stops WHERE trip_id = ?', (trip_id,)).fetchall()
+    photos.extend(stop['photo'] for stop in stops if stop['photo'])
     with conn:
-        conn.execute("DELETE FROM trips WHERE id = ?", (trip_id,))
+        _execute(conn, 'DELETE FROM trips WHERE id = ?', (trip_id,))
     conn.close()
     return photos
 
 
+def delete_expired_trips(days=45, db_path=None):
+    """Delete trips older than the retention period and return their photo keys."""
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    conn = get_db(db_path)
+    rows = _execute(conn, """
+        SELECT t.id, t.start_photo, t.end_photo, s.photo AS stop_photo
+        FROM trips AS t
+        LEFT JOIN trip_stops AS s ON s.trip_id = t.id
+        WHERE t.created_at < ?
+    """, (cutoff,)).fetchall()
+    trip_ids = {row['id'] for row in rows}
+    photos = list(dict.fromkeys(
+        photo for row in rows
+        for photo in (row['start_photo'], row['end_photo'], row['stop_photo'])
+        if photo
+    ))
+    if trip_ids:
+        placeholders = ', '.join('?' for _ in trip_ids)
+        with conn:
+            _execute(conn, f'DELETE FROM trips WHERE id IN ({placeholders})', tuple(trip_ids))
+    conn.close()
+    return len(trip_ids), photos
+
+
 def list_trips(month=None, search=None, status=None, db_path=None):
-    """
-    Lists trips with optional filters:
-    month: 'YYYY-MM'
-    search: text match on vehicle_plate, driver_name or purpose
-    status: 'EM_ANDAMENTO', 'FINALIZADA', 'CANCELADA'
-    """
     conn = get_db(db_path)
     query = """
-        SELECT t.*,
-               COUNT(s.id) as stops_count
-        FROM trips t
-        LEFT JOIN trip_stops s ON t.id = s.trip_id
+        SELECT t.*, COUNT(s.id) AS stops_count
+        FROM trips t LEFT JOIN trip_stops s ON t.id = s.trip_id
         WHERE 1=1
     """
     params = []
-
     if month and month.strip():
-        query += " AND t.start_time LIKE ?"
-        params.append(f"{month.strip()}%")
-
+        query += ' AND t.start_time LIKE ?'
+        params.append(f'{month.strip()}%')
     if status and status.strip():
-        query += " AND t.status = ?"
+        query += ' AND t.status = ?'
         params.append(status.strip())
-
     if search and search.strip():
-        search_term = f"%{search.strip()}%"
-        query += " AND (t.vehicle_plate LIKE ? OR t.driver_name LIKE ? OR t.purpose LIKE ?)"
-        params.extend([search_term, search_term, search_term])
+        term = f"%{search.strip()}%"
+        query += ' AND (t.vehicle_plate LIKE ? OR t.driver_name LIKE ? OR t.purpose LIKE ?)'
+        params.extend([term, term, term])
+    query += ' GROUP BY t.id ORDER BY t.start_time DESC, t.id DESC'
 
-    query += " GROUP BY t.id ORDER BY t.start_time DESC, t.id DESC"
-
-    rows = conn.execute(query, params).fetchall()
     trips = []
-
-    for r in rows:
-        t = row_to_dict(r)
-        # Fetch stops details for each trip
-        stops_rows = conn.execute(
-            "SELECT * FROM trip_stops WHERE trip_id = ? ORDER BY stop_km ASC, stop_time ASC",
-            (t['id'],)
+    for row in _execute(conn, query, params).fetchall():
+        trip = row_to_dict(row)
+        stops = _execute(conn,
+            'SELECT * FROM trip_stops WHERE trip_id = ? ORDER BY stop_km ASC, stop_time ASC',
+            (trip['id'],)
         ).fetchall()
-        t['stops'] = [row_to_dict(s) for s in stops_rows]
-        trips.append(t)
-
+        trip['stops'] = [row_to_dict(stop) for stop in stops]
+        trips.append(trip)
     conn.close()
     return trips
 
 
 def get_available_months(db_path=None):
-    """Returns sorted unique months (YYYY-MM) present in trips."""
     conn = get_db(db_path)
-    rows = conn.execute("""
-        SELECT DISTINCT substr(start_time, 1, 7) as month
-        FROM trips
-        WHERE start_time IS NOT NULL AND length(start_time) >= 7
+    rows = _execute(conn, """
+        SELECT DISTINCT substr(start_time, 1, 7) AS month
+        FROM trips WHERE start_time IS NOT NULL AND length(start_time) >= 7
         ORDER BY month DESC
     """).fetchall()
     conn.close()
-    return [r['month'] for r in rows if r['month']]
+    return [row['month'] for row in rows if row['month']]
 
 
 def get_summary_stats(month=None, db_path=None):
-    """Calculates fleet KPIs for the dashboard."""
     conn = get_db(db_path)
-    query = "SELECT * FROM trips WHERE 1=1"
+    query = 'SELECT * FROM trips WHERE 1=1'
     params = []
-
     if month and month.strip():
-        query += " AND start_time LIKE ?"
-        params.append(f"{month.strip()}%")
-
-    rows = conn.execute(query, params).fetchall()
+        query += ' AND start_time LIKE ?'
+        params.append(f'{month.strip()}%')
+    rows = _execute(conn, query, params).fetchall()
     conn.close()
 
     total_trips = len(rows)
-    finished_trips = sum(1 for r in rows if r['status'] == 'FINALIZADA')
-    active_trips = sum(1 for r in rows if r['status'] == 'EM_ANDAMENTO')
-    total_km = sum(float(r['total_km'] or 0) for r in rows if r['status'] == 'FINALIZADA' and r['total_km'])
-    avg_km = round(total_km / finished_trips, 2) if finished_trips > 0 else 0.0
-    unique_vehicles = len(set(r['vehicle_plate'] for r in rows if r['vehicle_plate']))
-
+    finished = sum(1 for row in rows if row['status'] == 'FINALIZADA')
+    total_km = sum(float(row['total_km'] or 0) for row in rows if row['status'] == 'FINALIZADA' and row['total_km'])
     return {
         'total_trips': total_trips,
-        'finished_trips': finished_trips,
-        'active_trips': active_trips,
+        'finished_trips': finished,
+        'active_trips': sum(1 for row in rows if row['status'] == 'EM_ANDAMENTO'),
         'total_km': round(total_km, 2),
-        'avg_km': avg_km,
-        'unique_vehicles': unique_vehicles
+        'avg_km': round(total_km / finished, 2) if finished else 0.0,
+        'unique_vehicles': len({row['vehicle_plate'] for row in rows if row['vehicle_plate']})
     }
