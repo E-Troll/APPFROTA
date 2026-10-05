@@ -1,0 +1,57 @@
+name: Expand APPFROTA project archive
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/expand-project.yml
+
+permissions:
+  contents: write
+
+jobs:
+  expand-project:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish project files and remove archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d)"
+          unzip -q "APP Veiculo.zip" -d "$work_dir"
+          project_dir="$work_dir/APP Veiculo"
+          test -f "$project_dir/app.py"
+          rsync -a \
+            --exclude='/venv/' \
+            --exclude='/odometro.db' \
+            --exclude='__MACOSX/' \
+            --exclude='._*' \
+            --exclude='.DS_Store' \
+            "$project_dir/" ./
+          sed -i \
+            -e 's|/Users/will/Downloads/APP Veiculo|.|g' \
+            -e 's|localhost:5000|localhost:5050|g' \
+            -e 's|127.0.0.1:5000|127.0.0.1:5050|g' \
+            -e 's|\./run.sh|bash run.sh|g' \
+            README.md
+          mkdir -p tests
+          touch tests/__init__.py
+          printf '%s\n' \
+            '__pycache__/' \
+            '*.py[cod]' \
+            'venv/' \
+            '.venv/' \
+            '*/venv/' \
+            'odometro.db' \
+            'uploads/*' \
+            '!uploads/.gitkeep' > .gitignore
+          git rm -- "APP Veiculo.zip" .github/workflows/expand-project.yml
+          git add -A
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Publish APPFROTA project files" \
+            -m "Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
+          git push origin HEAD:main
