@@ -11,3 +11,4 @@ uploads/*
 !uploads/.gitkeep
 .DS_Store
 ._*
+_backup_local/
