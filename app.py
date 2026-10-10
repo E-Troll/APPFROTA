@@ -6,21 +6,19 @@ Main Flask application routing, API endpoints, file uploads and report exports.
 import os
 import io
 import csv
-import hmac
 from datetime import datetime
 from flask import (
     Flask, render_template, request, jsonify, send_from_directory,
-    Response, abort, make_response, redirect
+    Response, abort, make_response
 )
 
 import database
 from services.image_service import (
-    process_and_save_odometer_photo, allowed_file,
+    process_and_save_odometer_photo, delete_image_file, allowed_file,
     DEFAULT_UPLOAD_FOLDER
 )
-from services.export_excel import generate_trips_excel, parse_dt
+from services.export_excel import generate_trips_excel
 from services.export_pdf import generate_trips_pdf
-from services.supabase_storage import delete_photos, is_configured as storage_is_configured, signed_photo_url, store_photo
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
@@ -46,8 +44,6 @@ def index():
 @app.route('/uploads/<path:filename>')
 def serve_upload(filename):
     """Serves uploaded odometer photos securely."""
-    if storage_is_configured():
-        return redirect(signed_photo_url(filename))
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 
@@ -70,19 +66,16 @@ def api_start_trip():
         driver = request.form.get('driver_name', '').strip()
         model = request.form.get('vehicle_model', '').strip()
         purpose = request.form.get('purpose', '').strip()
-        origin_city = request.form.get('origin_city', '').strip()
-        origin_br = request.form.get('origin_br', '').strip()
-        action_type = request.form.get('action_type', '').strip()
         start_km_raw = request.form.get('start_km', '').strip().replace(',', '.')
         start_time = request.form.get('start_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        lat = request.form.get('lat')
+        lng = request.form.get('lng')
 
         # Validation
         if not plate:
-            return jsonify({'success': False, 'error': 'O recurso (sigla) é obrigatório.'}), 400
-        if not origin_city:
-            return jsonify({'success': False, 'error': 'A cidade de origem é obrigatória.'}), 400
-        if not origin_br:
-            return jsonify({'success': False, 'error': 'A BR de origem é obrigatória.'}), 400
+            return jsonify({'success': False, 'error': 'A placa do veículo é obrigatória.'}), 400
+        if not driver:
+            return jsonify({'success': False, 'error': 'O nome do condutor é obrigatório.'}), 400
         if not start_km_raw:
             return jsonify({'success': False, 'error': 'A quilometragem inicial é obrigatória.'}), 400
 
@@ -98,7 +91,7 @@ def api_start_trip():
         if active:
             return jsonify({
                 'success': False,
-                'error': f"Já existe uma viagem em andamento (Recurso: {active['vehicle_plate']}, ID #{active['id']}). Finalize-a antes de iniciar outra."
+                'error': f"Já existe uma viagem em andamento (Placa: {active['vehicle_plate']}, ID #{active['id']}). Finalize-a antes de iniciar outra."
             }), 400
 
         # Photo validation
@@ -109,29 +102,23 @@ def api_start_trip():
         if not allowed_file(photo_file.filename):
             return jsonify({'success': False, 'error': 'Formato de imagem inválido. Use JPG, PNG ou WEBP.'}), 400
 
-        # Process and watermark image
+        # Process and watermark image with GPS info
+        geo_str = f"GPS: {lat}, {lng}" if lat and lng else ""
         saved_filename = process_and_save_odometer_photo(
             file_storage=photo_file,
             stage_label='SAÍDA',
             km_value=start_km,
             plate=plate,
             driver_name=driver,
+            extra_text=geo_str,
             timestamp_str=start_time,
             upload_folder=app.config['UPLOAD_FOLDER']
         )
-        saved_filename = store_photo(saved_filename, app.config['UPLOAD_FOLDER'])
 
         trip_id = database.create_trip({
-            'vehicle_plate': plate,
-            'vehicle_model': model,
-            'driver_name': driver,
-            'purpose': purpose,
-            'start_time': start_time,
-            'start_km': start_km,
-            'start_photo': saved_filename,
-            'origin_city': origin_city,
-            'origin_br': origin_br,
-            'action_type': action_type
+            'vehicle_plate': plate, 'vehicle_model': model, 'driver_name': driver,
+            'purpose': purpose, 'start_time': start_time, 'start_km': start_km,
+            'start_photo': saved_filename, 'lat': lat, 'lng': lng
         })
 
         return jsonify({
@@ -157,6 +144,8 @@ def api_add_stop(trip_id):
         stop_km_raw = request.form.get('stop_km', '').strip().replace(',', '.')
         reason = request.form.get('reason', '').strip()
         stop_time = request.form.get('stop_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        lat = request.form.get('lat')
+        lng = request.form.get('lng')
 
         if not stop_km_raw:
             return jsonify({'success': False, 'error': 'A quilometragem no momento da parada é obrigatória.'}), 400
@@ -190,23 +179,29 @@ def api_add_stop(trip_id):
         if not allowed_file(photo_file.filename):
             return jsonify({'success': False, 'error': 'Formato de imagem inválido. Use JPG, PNG ou WEBP.'}), 400
 
+        # Process and watermark image with GPS info
+        geo_str = f"GPS: {lat}, {lng}" if lat and lng else ""
+        reason_str = f"MOTIVO: {reason}" if reason else ""
+        extra_text = " ".join(filter(None, [geo_str, reason_str]))
+
         saved_filename = process_and_save_odometer_photo(
             file_storage=photo_file,
             stage_label='PARADA',
             km_value=stop_km,
             plate=trip['vehicle_plate'],
             driver_name=trip['driver_name'],
-            extra_text=f"MOTIVO: {reason}" if reason else "",
+            extra_text=extra_text,
             timestamp_str=stop_time,
             upload_folder=app.config['UPLOAD_FOLDER']
         )
-        saved_filename = store_photo(saved_filename, app.config['UPLOAD_FOLDER'])
 
         stop_id = database.add_stop_to_trip(trip_id, {
             'stop_time': stop_time,
             'stop_km': stop_km,
             'reason': reason,
-            'photo': saved_filename
+            'photo': saved_filename,
+            'lat': lat,
+            'lng': lng
         })
 
         return jsonify({
@@ -231,11 +226,9 @@ def api_finish_trip(trip_id):
 
         end_km_raw = request.form.get('end_km', '').strip().replace(',', '.')
         end_time = request.form.get('end_time') or datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        dest_city = request.form.get('dest_city', '').strip()
-        dest_br = request.form.get('dest_br', '').strip()
+        lat = request.form.get('lat')
+        lng = request.form.get('lng')
 
-        if not dest_city or not dest_br:
-            return jsonify({'success': False, 'error': 'A cidade e a BR de destino são obrigatórias.'}), 400
         if not end_km_raw:
             return jsonify({'success': False, 'error': 'A quilometragem final é obrigatória.'}), 400
 
@@ -268,23 +261,25 @@ def api_finish_trip(trip_id):
         if not allowed_file(photo_file.filename):
             return jsonify({'success': False, 'error': 'Formato de imagem inválido. Use JPG, PNG ou WEBP.'}), 400
 
+        # Process and watermark image with GPS info
+        geo_str = f"GPS: {lat}, {lng}" if lat and lng else ""
         saved_filename = process_and_save_odometer_photo(
             file_storage=photo_file,
             stage_label='CHEGADA',
             km_value=end_km,
             plate=trip['vehicle_plate'],
             driver_name=trip['driver_name'],
+            extra_text=geo_str,
             timestamp_str=end_time,
             upload_folder=app.config['UPLOAD_FOLDER']
         )
-        saved_filename = store_photo(saved_filename, app.config['UPLOAD_FOLDER'])
 
         total_km = database.finish_trip(trip_id, {
             'end_time': end_time,
             'end_km': end_km,
             'end_photo': saved_filename,
-            'dest_city': dest_city,
-            'dest_br': dest_br
+            'lat': lat,
+            'lng': lng
         })
 
         return jsonify({
@@ -317,7 +312,8 @@ def api_delete_trip(trip_id):
     """Exclui uma viagem e remove suas fotos do servidor."""
     try:
         photos = database.delete_trip(trip_id)
-        delete_photos(photos, upload_folder=app.config['UPLOAD_FOLDER'])
+        for p in photos:
+            delete_image_file(p, upload_folder=app.config['UPLOAD_FOLDER'])
         return jsonify({'success': True, 'message': 'Viagem excluída com sucesso.'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -413,39 +409,34 @@ def export_csv():
 
     writer = csv.writer(output, delimiter=';')
     writer.writerow([
-        'Dia', 'Recurso (SIGLA)', 'Cidade Origem', 'Origem BR', 'Origem KM', 'Hora Saída',
-        'Cidade Destino', 'Destino BR', 'Destino KM', 'Hora Chegada', 'Tipo de Ação',
-        'Distância', 'Tempo de Deslocamento'
+        'ID Viagem', 'Data Início', 'Placa', 'Modelo Veículo', 'Condutor',
+        'Finalidade / Rota', 'KM Inicial', 'Foto Saída (Link)', 'Qtd Paradas',
+        'Detalhes Paradas', 'Data Término', 'KM Final', 'Foto Chegada (Link)',
+        'Total KM Percorrido', 'Status'
     ])
 
-    def fmt_km(value):
-        return str(value).replace('.', ',') if value is not None else ''
+    for t in trips:
+        stops = t.get('stops', [])
+        stops_summary = " | ".join(f"{s['stop_km']} km ({s['reason'] or 'Pausa'})" for s in stops) if stops else "-"
+        start_link = f"{base_url}/uploads/{t['start_photo']}" if t.get('start_photo') else "-"
+        end_link = f"{base_url}/uploads/{t['end_photo']}" if t.get('end_photo') else "-"
 
-    for t in sorted(trips, key=lambda item: (item.get('start_time') or '', item.get('id') or 0)):
-        start = parse_dt(t.get('start_time'))
-        end = parse_dt(t.get('end_time'))
-        same_br = t.get('origin_br') and t.get('origin_br') == t.get('dest_br')
-        distance = ''
-        if same_br and t.get('end_km') is not None:
-            distance = fmt_km(round(float(t['end_km']) - float(t['start_km']), 2))
-        elapsed = ''
-        if start and end:
-            minutes = int(((end - start).total_seconds() // 60) % 1440)
-            elapsed = f"{minutes // 60}:{minutes % 60:02d}"
         writer.writerow([
-            start.strftime('%d/%m/%Y') if start else '',
+            t.get('id'),
+            t.get('start_time', ''),
             t.get('vehicle_plate', ''),
-            t.get('origin_city') or '',
-            t.get('origin_br') or '',
-            fmt_km(t.get('start_km')),
-            start.strftime('%H:%M') if start else '',
-            t.get('dest_city') or '',
-            t.get('dest_br') or '',
-            fmt_km(t.get('end_km')),
-            end.strftime('%H:%M') if end else '',
-            t.get('action_type') or '',
-            distance,
-            elapsed
+            t.get('vehicle_model', '') or '-',
+            t.get('driver_name', ''),
+            t.get('purpose', '') or '-',
+            str(t.get('start_km', '')).replace('.', ','),
+            start_link,
+            len(stops),
+            stops_summary,
+            t.get('end_time', '') or '-',
+            str(t.get('end_km', '')).replace('.', ',') if t.get('end_km') is not None else '-',
+            end_link,
+            str(t.get('total_km', '')).replace('.', ',') if t.get('total_km') is not None else '-',
+            t.get('status', '')
         ])
 
     csv_data = output.getvalue().encode('utf-8-sig')
@@ -458,19 +449,8 @@ def export_csv():
     return response
 
 
-@app.route('/api/cron/cleanup', methods=['GET'])
-def api_cleanup_expired_trips():
-    secret = os.environ.get('CRON_SECRET')
-    if not secret:
-        return jsonify({'success': False, 'error': 'CRON_SECRET não configurado.'}), 503
-    if not hmac.compare_digest(request.headers.get('Authorization', ''), f'Bearer {secret}'):
-        return jsonify({'success': False, 'error': 'Não autorizado.'}), 401
-    deleted_trips, photos = database.delete_expired_trips(days=45)
-    delete_photos(photos, upload_folder=app.config['UPLOAD_FOLDER'])
-    return jsonify({'success': True, 'deleted_trips': deleted_trips, 'deleted_photos': len(photos)})
-
-
 if __name__ == '__main__':
     print("Iniciando Servidor de Controle de Quilometragem...")
     print("Acesse no navegador: http://localhost:5050")
     app.run(host='0.0.0.0', port=5050, debug=True)
+
