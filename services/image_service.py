@@ -67,10 +67,8 @@ def process_and_save_odometer_photo(
         dt = datetime.now()
     else:
         try:
-            clean_ts = timestamp_str.replace('T', ' ')
-            if len(clean_ts) > 19:
-                clean_ts = clean_ts[:19]
-            dt = datetime.strptime(clean_ts, '%Y-%m-%d %H:%M:%S')
+            clean_ts = timestamp_str.strip().replace('T', ' ')
+            dt = datetime.fromisoformat(clean_ts)
         except Exception:
             dt = datetime.now()
 
